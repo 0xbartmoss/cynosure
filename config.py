@@ -63,7 +63,7 @@ RESTART_CONFIG = {
 
 # Service configuration
 SERVICE_CONFIG = {
-    "service_name": "mailru-cynosure",
+    "service_name": "cynosure",
     "enable_health_monitoring": True,
     "enable_auto_restart": True,
     "enable_retry_logic": True,

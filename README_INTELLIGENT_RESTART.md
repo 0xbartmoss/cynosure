@@ -104,7 +104,7 @@ RESTART_CONFIG = {
 
 ```python
 SERVICE_CONFIG = {
-    "service_name": "mailru-cynosure",
+    "service_name": "cynosure",
     "enable_health_monitoring": True,
     "enable_auto_restart": True,
     "enable_retry_logic": True,
@@ -263,10 +263,10 @@ The intelligent restart system is **backward compatible**:
 
 ```bash
 # Check service status
-systemctl status mailru-cynosure
+systemctl status cynosure
 
 # View service logs
-journalctl -u mailru-cynosure -f
+journalctl -u cynosure -f
 
 # Check execution state
 cat /home/sh4d3/amsul/projects/mailru/execution_state.json

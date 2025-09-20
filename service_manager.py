@@ -6,7 +6,6 @@ Handles systemd service operations and restart logic.
 
 import subprocess
 import threading
-import time
 from typing import Optional
 
 from shared_utils import Logger
@@ -44,27 +43,70 @@ class ServiceManager:
         """Actually perform the service restart."""
         try:
             Logger.log(f"Restarting service: {self.service_name}")
+
+            # Use the restart script which handles multiple restart methods
+            import os
+
+            script_path = os.path.join(os.path.dirname(__file__), "restart_service.sh")
+
+            if os.path.exists(script_path):
+                Logger.log("Using restart script for service restart")
+                result = subprocess.run(
+                    [script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+
+                if result.returncode == 0:
+                    Logger.log("Service restart script executed successfully")
+                    return
+                else:
+                    Logger.log(f"Restart script failed: {result.stderr}", "error")
+
+            # Fallback: Try systemctl restart directly
+            Logger.log("Trying direct systemctl restart...")
             result = subprocess.run(
                 ["systemctl", "restart", self.service_name],
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=False,
             )
 
             if result.returncode == 0:
-                Logger.log("Service restarted successfully")
+                Logger.log("Service restarted successfully via systemctl")
+                return
             else:
-                Logger.log(f"Failed to restart service: {result.stderr}", "error")
+                Logger.log(f"systemctl restart failed: {result.stderr}", "error")
+
+                # Final fallback: Exit the process to trigger systemd restart
+                Logger.log("Using process exit to trigger systemd restart")
+                import sys
+
+                sys.exit(0)
 
         except subprocess.TimeoutExpired:
-            Logger.log("Service restart timed out", "error")
+            Logger.log("Service restart timed out, using process exit", "error")
+            import sys
+
+            sys.exit(0)
         except subprocess.CalledProcessError as e:
             Logger.log(
                 f"Service restart failed with return code {e.returncode}: {e.stderr}",
                 "error",
             )
+            Logger.log("Using process exit to trigger systemd restart")
+            import sys
+
+            sys.exit(0)
         except Exception as e:
             Logger.log(f"Unexpected error during service restart: {e}", "error")
+            Logger.log("Using process exit to trigger systemd restart")
+            import sys
+
+            sys.exit(0)
 
     def get_service_status(self) -> str:
         """
@@ -79,6 +121,7 @@ class ServiceManager:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             return result.stdout.strip()
         except Exception as e:
@@ -111,6 +154,7 @@ class ServiceManager:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=False,
             )
             return result.stdout
         except Exception as e:
@@ -163,6 +207,7 @@ class ServiceManager:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
 
             properties = {}
