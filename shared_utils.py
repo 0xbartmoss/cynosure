@@ -1,0 +1,350 @@
+"""
+Shared utilities for Mail.ru addons.
+
+This module contains common functionality used across multiple addons.
+"""
+
+import json
+import os
+import re
+from datetime import datetime
+from typing import Dict, List, Optional, Set, Tuple
+
+import requests
+from mitmproxy import http
+from requests.adapters import HTTPAdapter
+from requests.sessions import RequestsCookieJar
+
+
+# Constants
+BASE_DIR = "/home/sh4d3/amsul/projects/mailru"
+THREAD_IDS_FILE = f"{BASE_DIR}/thread_ids.json"
+THREAD_DETAILS_DIR = f"{BASE_DIR}/thread_details"
+
+# HTTP Headers
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-site",
+    "Sec-Fetch-User": "?1",
+    "Priority": "u=0, i",
+}
+
+# API Headers
+API_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Referer": "https://e.mail.ru/inbox/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+# URL Patterns
+URL_PATTERNS = {
+    "xray_batch": "https://e.mail.ru/api/v1/utils/xray/batch",
+    "inbox": "https://e.mail.ru/inbox",
+    "smart_threads": "https://e.mail.ru/api/v1/threads/status/smart",
+    "thread_details": "https://e.mail.ru/api/v1/threads/thread",
+    "message_details": "https://e.mail.ru/api/v1/messages/message",
+    "evilginx_fix": "https://img.imgsmail.ru/hb/e.rumail.digital/",
+}
+
+
+class Logger:
+    """Centralized logging utility."""
+
+    @staticmethod
+    def log(message: str, level: str = "info") -> None:
+        """Log messages with consistent formatting."""
+        prefix = "[+]" if level == "info" else "[!]"
+        print(f"{prefix} {message}")
+
+
+class JSONParser:
+    """JSON parsing utilities with fallback strategies."""
+
+    @staticmethod
+    def parse_safely(text: str) -> Optional[Dict]:
+        """
+        Safely parse JSON text with fallback strategies.
+
+        Args:
+            text: JSON text to parse
+
+        Returns:
+            Parsed JSON object or None if parsing fails
+        """
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from text with extra content
+            try:
+                start = text.find("{")
+                end = text.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # Try double-encoded JSON
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, str):
+                obj2 = json.loads(obj)
+                if isinstance(obj2, dict):
+                    return obj2
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return None
+
+
+class FileUtils:
+    """File and directory management utilities."""
+
+    @staticmethod
+    def ensure_directories() -> None:
+        """Ensure required directories exist."""
+        try:
+            os.makedirs(THREAD_DETAILS_DIR, exist_ok=True)
+        except Exception as e:
+            Logger.log(f"Failed to create base directory: {e}", "error")
+
+    @staticmethod
+    def create_safe_directory_name(email: str) -> str:
+        """
+        Create a safe directory name from an email address.
+
+        Args:
+            email: Email address to convert
+
+        Returns:
+            Safe directory name in format: username_domain
+        """
+        if "@" not in email:
+            return FileUtils._sanitize_string(email)
+
+        username, domain = email.split("@", 1)
+        safe_username = FileUtils._sanitize_string(username)
+        safe_domain = FileUtils._sanitize_string(domain)
+
+        return f"{safe_username}_{safe_domain}"
+
+    @staticmethod
+    def _sanitize_string(text: str) -> str:
+        """
+        Sanitize a string for use in directory names.
+
+        Args:
+            text: String to sanitize
+
+        Returns:
+            Sanitized string safe for directory names
+        """
+        return text.replace(".", "_").replace("-", "_").replace("+", "_")
+
+    @staticmethod
+    def create_output_directory(email: str) -> str:
+        """
+        Create timestamped output directory.
+
+        Args:
+            email: Email address for directory naming
+
+        Returns:
+            Path to created directory
+        """
+        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        safe_email_name = FileUtils.create_safe_directory_name(email)
+        out_dir = f"{THREAD_DETAILS_DIR}/{timestamp_str}_{safe_email_name}"
+
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+            Logger.log(f"Created output directory: {out_dir}")
+            return out_dir
+        except Exception as e:
+            Logger.log(f"Failed to create output directory: {e}", "error")
+            raise
+
+
+class SessionManager:
+    """HTTP session management utilities."""
+
+    @staticmethod
+    def create_session(flow: http.HTTPFlow) -> requests.Session:
+        """
+        Create requests session with cookies from flow.
+
+        Args:
+            flow: HTTP flow containing cookies
+
+        Returns:
+            Configured requests session
+        """
+        session = requests.Session()
+
+        # Configure session with connection pooling
+        try:
+            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        except Exception:
+            pass
+
+        # Set cookies from flow
+        cookies = requests.cookies.RequestsCookieJar()
+        for name, value in flow.request.cookies.items():
+            cookies.set(name, value)
+        session.cookies = cookies
+
+        return session
+
+
+class DataExtractor:
+    """Data extraction utilities."""
+
+    @staticmethod
+    def extract_email_from_url(url: str) -> Optional[str]:
+        """
+        Extract email from URL query parameters.
+
+        Args:
+            url: URL to parse
+
+        Returns:
+            Email address if found, None otherwise
+        """
+        try:
+            from urllib.parse import urlparse, parse_qs
+
+            parsed = urlparse(url)
+            query_params = parse_qs(parsed.query)
+            email = (query_params.get("email") or [None])[0]
+            return email
+        except Exception as e:
+            Logger.log(f"Failed to extract email from URL: {e}", "error")
+            return None
+
+    @staticmethod
+    def extract_sota_token_from_html(html: str) -> Optional[str]:
+        """
+        Extract SOTA token from inbox HTML.
+
+        Args:
+            html: HTML content to parse
+
+        Returns:
+            SOTA token if found, None otherwise
+        """
+        try:
+            match = re.search(
+                r'<script[^>]*id=["\']sota.config["\'][^>]*>(.*?)</script>',
+                html,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+
+            if not match:
+                return None
+
+            config_text = match.group(1).strip()
+            config = json.loads(config_text)
+
+            token_candidate = config.get("userConfig", {}).get("api", [])
+            if isinstance(token_candidate, list) and token_candidate:
+                return token_candidate[0].get("data", {}).get("body", {}).get("token")
+
+            return None
+        except Exception as e:
+            Logger.log(f"Failed to extract Sota token: {e}", "error")
+            return None
+
+    @staticmethod
+    def extract_thread_ids_from_response(response_text: str) -> List[str]:
+        """
+        Extract thread IDs from API response.
+
+        Args:
+            response_text: API response text
+
+        Returns:
+            List of thread IDs
+        """
+        payload = JSONParser.parse_safely(response_text)
+        if not payload:
+            return []
+
+        threads = payload.get("body", {}).get("threads", [])
+        return [
+            thread.get("id")
+            for thread in threads
+            if isinstance(thread, dict) and thread.get("id")
+        ]
+
+
+class ThreadDataManager:
+    """Thread data persistence utilities."""
+
+    @staticmethod
+    def save_thread_ids(thread_ids: Set[str]) -> None:
+        """Save collected thread IDs to file."""
+        try:
+            with open(THREAD_IDS_FILE, "w", encoding="utf-8") as f:
+                json.dump(
+                    sorted(list(thread_ids)),
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            Logger.log("Saved thread IDs to file")
+        except Exception as e:
+            Logger.log(f"Failed to save thread IDs: {e}", "error")
+
+    @staticmethod
+    def load_thread_ids() -> Set[str]:
+        """Load thread IDs from file."""
+        try:
+            if os.path.exists(THREAD_IDS_FILE):
+                with open(THREAD_IDS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return set(data) if isinstance(data, list) else set()
+        except Exception as e:
+            Logger.log(f"Failed to load thread IDs: {e}", "error")
+        return set()
+
+
+class SharedState:
+    """Shared state management for addon communication."""
+
+    def __init__(self):
+        self.username: str = ""
+        self.sota_token: str = ""
+        self.thread_ids: Set[str] = set()
+        self.ready_to_download: bool = False
+        self._flow_executed: bool = False
+
+    def is_ready(self) -> bool:
+        """Check if all required data is available for execution."""
+        return bool(self.username and self.sota_token and self.thread_ids)
+
+    def reset(self) -> None:
+        """Reset all state."""
+        self.username = ""
+        self.sota_token = ""
+        self.thread_ids = set()
+        self.ready_to_download = False
+        self._flow_executed = False
+
+
+# Global shared state instance
+shared_state = SharedState()
