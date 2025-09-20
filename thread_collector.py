@@ -1,7 +1,7 @@
 """
-Thread Collector Addon for Mail.ru
+Thread Collector Addon
 
-Collects thread IDs from Mail.ru API responses with pagination support.
+Collects thread IDs from API responses with pagination support.
 """
 
 import time

@@ -1,5 +1,5 @@
 """
-Session-based Execution State Manager for Mail.ru Cynosure
+Session-based Execution State Manager for Cynosure
 
 Manages execution state per session instead of globally.
 """

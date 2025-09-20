@@ -1,5 +1,5 @@
 """
-Error Classifier for Mail.ru Cynosure
+Error Classifier for Cynosure
 
 Classifies errors to determine appropriate retry/restart behavior.
 """

@@ -1,5 +1,5 @@
 """
-Session Manager for Mail.ru Cynosure
+Session Manager for Cynosure
 
 Manages multiple concurrent user sessions for processing different users simultaneously.
 """

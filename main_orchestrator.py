@@ -1,5 +1,5 @@
 """
-Main Orchestrator Addon for Mail.ru
+Main Orchestrator Addon for Cynosure
 
 Coordinates between all addons and manages the overall flow.
 """

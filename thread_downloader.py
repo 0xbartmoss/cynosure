@@ -1,7 +1,7 @@
 """
-Thread Downloader Addon for Mail.ru
+Thread Downloader Addon
 
-Downloads thread data and attachments from Mail.ru API.
+Downloads thread data and attachments from API.
 """
 
 import json

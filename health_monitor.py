@@ -1,5 +1,5 @@
 """
-Health Monitor for Mail.ru Cynosure
+Health Monitor for Cynosure
 
 Monitors system health and detects stuck executions.
 """

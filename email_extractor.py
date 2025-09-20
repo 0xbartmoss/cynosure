@@ -1,7 +1,7 @@
 """
-Email Extractor Addon for Mail.ru
+Email Extractor Addon for Cynosure
 
-Extracts user email addresses from Mail.ru API requests.
+Extracts user email addresses from API requests.
 """
 
 from mitmproxy import http

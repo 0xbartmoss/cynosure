@@ -1,5 +1,5 @@
 """
-Service Manager for Mail.ru Cynosure
+Service Manager for Cynosure
 
 Handles systemd service status checking and logging.
 """

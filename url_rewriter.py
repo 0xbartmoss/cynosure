@@ -1,5 +1,5 @@
 """
-URL Rewriter Addon for Mail.ru
+URL Rewriter Addon
 
 Fixes evilginx domain issues by rewriting URLs from evilginx domains to real domains.
 """

@@ -1,5 +1,5 @@
 """
-Execution State Manager for Mail.ru Cynosure
+Execution State Manager for Cynosure
 
 Manages execution state, error tracking, and restart decisions.
 """
