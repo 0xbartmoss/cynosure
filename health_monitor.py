@@ -194,7 +194,7 @@ class HealthMonitor:
         def monitor_loop():
             while True:
                 try:
-                    health_status = self.check_health()
+                    self.check_health()
 
                     # If health check recommends restart, do it
                     if self.should_restart_service():

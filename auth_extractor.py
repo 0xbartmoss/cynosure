@@ -12,6 +12,7 @@ from shared_utils import (
     shared_state,
     ResponseFilter,
 )
+from session_manager import session_manager
 
 
 class AuthExtractor:
@@ -33,7 +34,6 @@ class AuthExtractor:
         Args:
             flow: HTTP flow to process
         """
-        pass
 
     def response(self, flow: http.HTTPFlow) -> None:
         """
@@ -60,8 +60,40 @@ class AuthExtractor:
         token = DataExtractor.extract_sota_token_from_html(html)
 
         if token:
-            shared_state.sota_token = token
-            Logger.log(f"SOTA token extracted: {shared_state.sota_token}")
+            # Find the most recent session that needs a token
+            # This prevents token assignment to wrong users due to global state contamination
+            active_sessions = session_manager.get_active_sessions()
+            sessions_needing_tokens = [
+                session
+                for session in active_sessions.values()
+                if not session.sota_token and not session.is_completed
+            ]
+
+            if sessions_needing_tokens:
+                # Sort by creation time to get the most recent session
+                most_recent_session = max(
+                    sessions_needing_tokens, key=lambda s: s.created_at
+                )
+                session_manager.update_session_token(
+                    most_recent_session.session_id, token
+                )
+                Logger.log(
+                    f"SOTA token extracted: {token} (session: {most_recent_session.session_id}, user: {most_recent_session.username})"
+                )
+
+                # Update global state only if this is the only active session
+                if len(active_sessions) == 1:
+                    shared_state.sota_token = token
+                    shared_state.username = most_recent_session.username
+                else:
+                    Logger.log(
+                        "Multiple active sessions detected, not updating global state"
+                    )
+            else:
+                Logger.log(f"SOTA token extracted: {token} (no sessions need tokens)")
+                # Update global state for backward compatibility only if no active sessions
+                if not active_sessions:
+                    shared_state.sota_token = token
         else:
             Logger.log("Could not find script#sota.config in inbox HTML", "error")
 

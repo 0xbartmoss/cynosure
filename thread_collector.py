@@ -20,6 +20,7 @@ from shared_utils import (
     shared_state,
     ResponseFilter,
 )
+from session_manager import session_manager
 
 
 class ThreadCollector:
@@ -58,6 +59,19 @@ class ThreadCollector:
         if not ResponseFilter.should_process_json_response(flow):
             return
 
+        # Check if we already have a session with threads collected
+        # Find the most recent session that needs thread collection
+        active_sessions = session_manager.get_active_sessions()
+        sessions_needing_threads = [
+            session
+            for session in active_sessions.values()
+            if not session.thread_ids and not session.is_completed
+        ]
+
+        if not sessions_needing_threads:
+            # All sessions already have threads collected, skip
+            return
+
         # Safely get JSON response text with size limits
         response_text = ResponseFilter.get_json_response_safely(flow)
         if not response_text:
@@ -70,15 +84,34 @@ class ThreadCollector:
         thread_ids = DataExtractor.extract_thread_ids_from_response(response_text)
 
         if thread_ids:
-            before_count = len(shared_state.thread_ids)
-            shared_state.thread_ids.update(thread_ids)
-            added = len(shared_state.thread_ids) - before_count
-            Logger.log(
-                f"Collected {len(thread_ids)} thread IDs, added {added} new (total {len(shared_state.thread_ids)})"
+            # Find the most recent session that needs thread collection
+            most_recent_session = max(
+                sessions_needing_threads, key=lambda s: s.created_at
             )
 
-            # Save thread IDs to file
-            ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+            # Add thread IDs to the most recent session
+            session_added = session_manager.add_thread_ids(
+                most_recent_session.session_id, thread_ids
+            )
+            Logger.log(
+                f"Added {session_added} thread IDs to session {most_recent_session.session_id} (user: {most_recent_session.username})"
+            )
+
+            # Update global state only if this is the only active session
+            if len(active_sessions) == 1:
+                before_count = len(shared_state.thread_ids)
+                shared_state.thread_ids.update(thread_ids)
+                added = len(shared_state.thread_ids) - before_count
+                shared_state.username = most_recent_session.username
+                Logger.log(
+                    f"Collected {len(thread_ids)} thread IDs, added {added} new (total {len(shared_state.thread_ids)})"
+                )
+                # Save thread IDs to file
+                ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+            else:
+                Logger.log(
+                    f"Multiple active sessions detected, not updating global state"
+                )
 
             # Start pagination to fetch all threads
             self._fetch_all_threads_with_pagination(flow)
@@ -94,11 +127,29 @@ class ThreadCollector:
         """
         Logger.log("Starting pagination to fetch all threads")
 
+        # Find the most recent session that needs pagination
+        active_sessions = session_manager.get_active_sessions()
+        sessions_needing_threads = [
+            session for session in active_sessions.values() if not session.is_completed
+        ]
+
+        if not sessions_needing_threads:
+            Logger.log("No active sessions found for pagination")
+            return
+
+        most_recent_session = max(sessions_needing_threads, key=lambda s: s.created_at)
+
+        if not most_recent_session.sota_token:
+            Logger.log(
+                f"No SOTA token available for session {most_recent_session.session_id}"
+            )
+            return
+
         # Extract parameters from original request
         parsed = urlparse(flow.request.pretty_url)
         query_params = parse_qs(parsed.query)
 
-        # Build base parameters
+        # Build base parameters using session-specific data
         base_params = {
             "folder": query_params.get("folder", ["0"])[0],
             "limit": "50",
@@ -118,14 +169,16 @@ class ThreadCollector:
                     '{"remove_from_sender_name":true,"remove_from_snippet":true,"remove_from_subject":true}'
                 ],
             )[0],
-            "email": shared_state.username,
+            "email": most_recent_session.username,  # Use session-specific email
             "htmlencoded": query_params.get("htmlencoded", ["false"])[0],
-            "token": shared_state.sota_token,
+            "token": most_recent_session.sota_token,  # Use session-specific token
             "_": str(int(time.time() * 1000)),
         }
 
         session = SessionManager.create_session(flow)
-        all_thread_ids = set(shared_state.thread_ids)
+        all_thread_ids = set(
+            most_recent_session.thread_ids
+        )  # Use session-specific thread IDs
         offset = 50  # Start from offset 50 (first 50 already collected)
 
         while True:
@@ -195,12 +248,17 @@ class ThreadCollector:
                 Logger.log(f"Error fetching threads at offset {offset}: {e}", "error")
                 break
 
-        # Update thread IDs and save
-        shared_state.thread_ids = all_thread_ids
+        # Update session with all collected thread IDs
+        session_manager.add_thread_ids(most_recent_session.session_id, all_thread_ids)
         Logger.log(
-            f"Pagination complete. Total threads collected: {len(shared_state.thread_ids)}"
+            f"Pagination complete for session {most_recent_session.session_id}. Total threads collected: {len(all_thread_ids)}"
         )
-        ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+
+        # Update global state only if this is the only active session
+        if len(active_sessions) == 1:
+            shared_state.thread_ids = all_thread_ids
+            shared_state.username = most_recent_session.username
+            ThreadDataManager.save_thread_ids(shared_state.thread_ids)
 
     def get_thread_ids(self) -> List[str]:
         """

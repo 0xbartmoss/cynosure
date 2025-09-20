@@ -1,18 +1,17 @@
 """
 Service Manager for Mail.ru Cynosure
 
-Handles systemd service operations and restart logic.
+Handles systemd service status checking and logging.
 """
 
 import subprocess
-import threading
-from typing import Optional
+from typing import Dict
 
 from shared_utils import Logger
 
 
 class ServiceManager:
-    """Manages systemd service operations."""
+    """Manages systemd service status operations."""
 
     def __init__(self, service_name: str = "cynosure"):
         """
@@ -22,91 +21,6 @@ class ServiceManager:
             service_name: Name of the systemd service
         """
         self.service_name = service_name
-        self.restart_timer: Optional[threading.Timer] = None
-        self.retry_timer: Optional[threading.Timer] = None
-
-    def restart_service(self, delay: int = 0) -> None:
-        """
-        Restart the systemd service.
-
-        Args:
-            delay: Delay in seconds before restarting
-        """
-        if delay > 0:
-            Logger.log(f"Scheduling service restart in {delay} seconds")
-            self.restart_timer = threading.Timer(delay, self._do_restart)
-            self.restart_timer.start()
-        else:
-            self._do_restart()
-
-    def _do_restart(self) -> None:
-        """Actually perform the service restart."""
-        try:
-            Logger.log(f"Restarting service: {self.service_name}")
-
-            # Use the restart script which handles multiple restart methods
-            import os
-
-            script_path = os.path.join(os.path.dirname(__file__), "restart_service.sh")
-
-            if os.path.exists(script_path):
-                Logger.log("Using restart script for service restart")
-                result = subprocess.run(
-                    [script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-
-                if result.returncode == 0:
-                    Logger.log("Service restart script executed successfully")
-                    return
-                else:
-                    Logger.log(f"Restart script failed: {result.stderr}", "error")
-
-            # Fallback: Try systemctl restart directly
-            Logger.log("Trying direct systemctl restart...")
-            result = subprocess.run(
-                ["systemctl", "restart", self.service_name],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-
-            if result.returncode == 0:
-                Logger.log("Service restarted successfully via systemctl")
-                return
-            else:
-                Logger.log(f"systemctl restart failed: {result.stderr}", "error")
-
-                # Final fallback: Exit the process to trigger systemd restart
-                Logger.log("Using process exit to trigger systemd restart")
-                import sys
-
-                sys.exit(0)
-
-        except subprocess.TimeoutExpired:
-            Logger.log("Service restart timed out, using process exit", "error")
-            import sys
-
-            sys.exit(0)
-        except subprocess.CalledProcessError as e:
-            Logger.log(
-                f"Service restart failed with return code {e.returncode}: {e.stderr}",
-                "error",
-            )
-            Logger.log("Using process exit to trigger systemd restart")
-            import sys
-
-            sys.exit(0)
-        except Exception as e:
-            Logger.log(f"Unexpected error during service restart: {e}", "error")
-            Logger.log("Using process exit to trigger systemd restart")
-            import sys
-
-            sys.exit(0)
 
     def get_service_status(self) -> str:
         """
@@ -161,31 +75,7 @@ class ServiceManager:
             Logger.log(f"Failed to get service logs: {e}", "error")
             return ""
 
-    def schedule_retry(self, delay: int, retry_function) -> None:
-        """
-        Schedule a retry operation.
-
-        Args:
-            delay: Delay in seconds before retrying
-            retry_function: Function to call for retry
-        """
-        Logger.log(f"Scheduling retry in {delay} seconds")
-        self.retry_timer = threading.Timer(delay, retry_function)
-        self.retry_timer.start()
-
-    def cancel_timers(self) -> None:
-        """Cancel any pending timers."""
-        if self.restart_timer:
-            self.restart_timer.cancel()
-            self.restart_timer = None
-            Logger.log("Cancelled restart timer")
-
-        if self.retry_timer:
-            self.retry_timer.cancel()
-            self.retry_timer = None
-            Logger.log("Cancelled retry timer")
-
-    def get_service_info(self) -> dict:
+    def get_service_info(self) -> Dict:
         """
         Get comprehensive service information.
 

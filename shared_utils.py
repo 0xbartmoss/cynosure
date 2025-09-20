@@ -1,5 +1,5 @@
 """
-Shared utilities for Mail.ru addons.
+Shared utilities addon.
 
 This module contains common functionality used across multiple addons.
 """
@@ -8,16 +8,15 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 import requests
 from mitmproxy import http
 from requests.adapters import HTTPAdapter
-from requests.sessions import RequestsCookieJar
 
 
 # Constants
-BASE_DIR = "/home/sh4d3/amsul/projects/mailru"
+BASE_DIR = ""
 THREAD_IDS_FILE = f"{BASE_DIR}/thread_ids.json"
 THREAD_DETAILS_DIR = f"{BASE_DIR}/thread_details"
 
@@ -281,7 +280,11 @@ class DataExtractor:
             List of thread IDs
         """
         payload = JSONParser.parse_safely(response_text)
-        if not payload:
+        if not payload or not isinstance(payload, dict):
+            Logger.log(
+                f"Failed to parse thread response as JSON: {response_text[:200]}...",
+                "error",
+            )
             return []
 
         threads = payload.get("body", {}).get("threads", [])
@@ -628,5 +631,5 @@ class SharedState:
         self._flow_executed = False
 
 
-# Global shared state instance
+# Global shared state instance (kept for backward compatibility)
 shared_state = SharedState()
