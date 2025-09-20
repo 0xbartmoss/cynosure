@@ -20,7 +20,7 @@ from session_execution_state import session_execution_manager
 class HealthMonitor:
     """
     Monitors system health and provides recommendations.
-    
+
     Updated for session-based architecture - no longer restarts service.
     """
 
@@ -131,7 +131,9 @@ class HealthMonitor:
             return False
 
         max_execution_time = 86400  # 24 hours
-        execution_duration = (datetime.now() - execution_state.start_time).total_seconds()
+        execution_duration = (
+            datetime.now() - execution_state.start_time
+        ).total_seconds()
         return execution_duration > max_execution_time
 
     def should_restart_service(self) -> bool:
@@ -153,7 +155,9 @@ class HealthMonitor:
             Dictionary with health summary
         """
         return {
-            "last_check": self.last_health_check.isoformat() if self.last_health_check else None,
+            "last_check": (
+                self.last_health_check.isoformat() if self.last_health_check else None
+            ),
             "check_interval": self.health_check_interval,
             "active_sessions": len(session_manager.get_active_sessions()),
             "service_running": service_manager.is_service_running(),
@@ -162,15 +166,15 @@ class HealthMonitor:
     def start_monitoring(self, interval: int = None) -> None:
         """
         Start the health monitoring loop.
-        
+
         Args:
             interval: Health check interval in seconds (optional)
-        
+
         Updated for session-based architecture - no longer restarts service.
         """
         if interval is not None:
             self.health_check_interval = interval
-            
+
         Logger.log(
             f"Starting health monitoring with {self.health_check_interval}s interval"
         )
@@ -182,7 +186,9 @@ class HealthMonitor:
 
                     # Check health but don't restart service (session-based approach)
                     if self.should_restart_service():
-                        Logger.log("Health issues detected, but service restart not needed in session-based mode")
+                        Logger.log(
+                            "Health issues detected, but service restart not needed in session-based mode"
+                        )
                         # In session-based approach, we don't restart the service
                         # Individual sessions handle their own retry logic
 

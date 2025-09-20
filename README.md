@@ -1,10 +1,10 @@
-# Mail.ru Cynosure - Multi-User Email Thread Downloader
+# Cynosure - Multi-User Email Thread Downloader
 
-A sophisticated MITM-based system for downloading email threads and attachments from Mail.ru accounts. The system supports multiple concurrent users with session-based isolation and automatic cleanup.
+A sophisticated MITM-based system for downloading email threads and attachments. The system supports multiple concurrent users with session-based isolation and automatic cleanup.
 
 ## 🚀 Overview
 
-Cynosure is a modular addon system that intercepts Mail.ru API traffic, extracts authentication tokens, collects thread IDs, and downloads complete email threads with attachments. The system is designed to handle multiple users simultaneously without conflicts.
+Cynosure is a modular addon system that intercepts API traffic, extracts authentication tokens, collects thread IDs, and downloads complete email threads with attachments. The system is designed to handle multiple users simultaneously without conflicts.
 
 ## 🏗️ Architecture
 

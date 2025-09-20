@@ -16,7 +16,7 @@ from requests.adapters import HTTPAdapter
 
 
 # Constants
-BASE_DIR = ""
+BASE_DIR = "/home/sh4d3/amsul/projects/mailru"
 THREAD_IDS_FILE = f"{BASE_DIR}/thread_ids.json"
 THREAD_DETAILS_DIR = f"{BASE_DIR}/thread_details"
 
