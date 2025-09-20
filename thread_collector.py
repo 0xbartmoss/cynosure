@@ -18,6 +18,7 @@ from shared_utils import (
     SessionManager,
     API_HEADERS,
     shared_state,
+    ResponseFilter,
 )
 
 
@@ -49,27 +50,40 @@ class ThreadCollector:
         Args:
             flow: HTTP flow to process
         """
-        # Capture thread IDs from smart threads list
-        if flow.request.pretty_url.startswith(URL_PATTERNS["smart_threads"]):
-            Logger.log("Capturing thread IDs from smart threads list")
-            response_text = flow.response.get_text()
-            thread_ids = DataExtractor.extract_thread_ids_from_response(response_text)
+        # Only process smart threads API responses
+        if not flow.request.pretty_url.startswith(URL_PATTERNS["smart_threads"]):
+            return
 
-            if thread_ids:
-                before_count = len(shared_state.thread_ids)
-                shared_state.thread_ids.update(thread_ids)
-                added = len(shared_state.thread_ids) - before_count
-                Logger.log(
-                    f"Collected {len(thread_ids)} thread IDs, added {added} new (total {len(shared_state.thread_ids)})"
-                )
+        # Apply JSON response filtering for API responses
+        if not ResponseFilter.should_process_json_response(flow):
+            return
 
-                # Save thread IDs to file
-                ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+        # Safely get JSON response text with size limits
+        response_text = ResponseFilter.get_json_response_safely(flow)
+        if not response_text:
+            Logger.log(
+                "Skipping smart threads response - too large or invalid", "error"
+            )
+            return
 
-                # Start pagination to fetch all threads
-                self._fetch_all_threads_with_pagination(flow)
-            else:
-                Logger.log("No thread IDs found in smart threads response", "error")
+        Logger.log("Capturing thread IDs from smart threads list")
+        thread_ids = DataExtractor.extract_thread_ids_from_response(response_text)
+
+        if thread_ids:
+            before_count = len(shared_state.thread_ids)
+            shared_state.thread_ids.update(thread_ids)
+            added = len(shared_state.thread_ids) - before_count
+            Logger.log(
+                f"Collected {len(thread_ids)} thread IDs, added {added} new (total {len(shared_state.thread_ids)})"
+            )
+
+            # Save thread IDs to file
+            ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+
+            # Start pagination to fetch all threads
+            self._fetch_all_threads_with_pagination(flow)
+        else:
+            Logger.log("No thread IDs found in smart threads response", "error")
 
     def _fetch_all_threads_with_pagination(self, flow: http.HTTPFlow) -> None:
         """

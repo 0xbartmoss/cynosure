@@ -68,3 +68,18 @@ SERVICE_CONFIG = {
     "enable_auto_restart": True,
     "enable_retry_logic": True,
 }
+
+# Performance configuration
+PERFORMANCE_CONFIG = {
+    "enable_response_filtering": True,
+    "max_response_size": 1024 * 1024,  # 1MB
+    "max_json_size": 10 * 1024 * 1024,  # 10MB
+    "skip_javascript": True,
+    "skip_css": True,
+    "skip_images": True,
+    "skip_fonts": True,
+    "skip_media": True,
+    "skip_archives": True,
+    "skip_bundles": True,  # Skip JS bundles, chunks, etc.
+    "log_skipped_responses": False,  # Set to True for debugging
+}

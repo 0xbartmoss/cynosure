@@ -323,6 +323,288 @@ class ThreadDataManager:
         return set()
 
 
+class ResponseFilter:
+    """Filters responses to improve performance and avoid processing unnecessary content."""
+
+    # Content types we want to process
+    INTERESTING_CONTENT_TYPES = {
+        "application/json",
+        "text/html",
+        "text/plain",
+    }
+
+    # Content types to skip entirely
+    SKIP_CONTENT_TYPES = {
+        "application/javascript",
+        "text/javascript",
+        "application/x-javascript",
+        "text/css",
+        "image/",
+        "video/",
+        "audio/",
+        "application/octet-stream",
+        "application/pdf",
+        "application/zip",
+        "application/x-",
+    }
+
+    # File extensions to skip
+    SKIP_EXTENSIONS = {
+        ".js",
+        ".css",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".mp4",
+        ".mp3",
+        ".wav",
+        ".pdf",
+        ".zip",
+        ".rar",
+        ".tar",
+        ".gz",
+        ".exe",
+        ".dll",
+    }
+
+    # Maximum response size to process (in bytes) - will be updated from config
+    MAX_RESPONSE_SIZE = 1024 * 1024  # 1MB default
+
+    # Maximum response size for JSON (in bytes) - will be updated from config
+    MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB default
+
+    @classmethod
+    def update_from_config(cls, config: dict) -> None:
+        """Update filter settings from configuration."""
+        if config.get("enable_response_filtering", True):
+            cls.MAX_RESPONSE_SIZE = config.get(
+                "max_response_size", cls.MAX_RESPONSE_SIZE
+            )
+            cls.MAX_JSON_SIZE = config.get("max_json_size", cls.MAX_JSON_SIZE)
+
+            # Update skip lists based on config
+            if not config.get("skip_javascript", True):
+                cls.SKIP_CONTENT_TYPES.discard("application/javascript")
+                cls.SKIP_CONTENT_TYPES.discard("text/javascript")
+                cls.SKIP_CONTENT_TYPES.discard("application/x-javascript")
+                cls.SKIP_EXTENSIONS.discard(".js")
+
+            if not config.get("skip_css", True):
+                cls.SKIP_CONTENT_TYPES.discard("text/css")
+                cls.SKIP_EXTENSIONS.discard(".css")
+
+            if not config.get("skip_images", True):
+                cls.SKIP_CONTENT_TYPES.discard("image/")
+                cls.SKIP_EXTENSIONS.discard(".png")
+                cls.SKIP_EXTENSIONS.discard(".jpg")
+                cls.SKIP_EXTENSIONS.discard(".jpeg")
+                cls.SKIP_EXTENSIONS.discard(".gif")
+                cls.SKIP_EXTENSIONS.discard(".svg")
+                cls.SKIP_EXTENSIONS.discard(".ico")
+
+            if not config.get("skip_fonts", True):
+                cls.SKIP_EXTENSIONS.discard(".woff")
+                cls.SKIP_EXTENSIONS.discard(".woff2")
+                cls.SKIP_EXTENSIONS.discard(".ttf")
+                cls.SKIP_EXTENSIONS.discard(".eot")
+
+            if not config.get("skip_media", True):
+                cls.SKIP_CONTENT_TYPES.discard("video/")
+                cls.SKIP_CONTENT_TYPES.discard("audio/")
+                cls.SKIP_EXTENSIONS.discard(".mp4")
+                cls.SKIP_EXTENSIONS.discard(".mp3")
+                cls.SKIP_EXTENSIONS.discard(".wav")
+
+            if not config.get("skip_archives", True):
+                cls.SKIP_CONTENT_TYPES.discard("application/zip")
+                cls.SKIP_EXTENSIONS.discard(".zip")
+                cls.SKIP_EXTENSIONS.discard(".rar")
+                cls.SKIP_EXTENSIONS.discard(".tar")
+                cls.SKIP_EXTENSIONS.discard(".gz")
+
+    @staticmethod
+    def should_process_response(flow: http.HTTPFlow) -> bool:
+        """
+        Determine if a response should be processed by addons.
+
+        Args:
+            flow: HTTP flow to check
+
+        Returns:
+            True if response should be processed, False otherwise
+        """
+        try:
+            # Check if response exists
+            if not flow.response:
+                return False
+
+            # Check response size
+            content_length = flow.response.headers.get("content-length")
+            if content_length:
+                try:
+                    size = int(content_length)
+                    if size > ResponseFilter.MAX_RESPONSE_SIZE:
+                        Logger.log(
+                            f"Skipping large response: {size} bytes from {flow.request.pretty_url}"
+                        )
+                        return False
+                except ValueError:
+                    pass
+
+            # Check content type
+            content_type = flow.response.headers.get("content-type", "").lower()
+            if content_type:
+                # Skip known uninteresting content types
+                for skip_type in ResponseFilter.SKIP_CONTENT_TYPES:
+                    if content_type.startswith(skip_type):
+                        return False
+
+                # Only process interesting content types
+                if not any(
+                    interesting in content_type
+                    for interesting in ResponseFilter.INTERESTING_CONTENT_TYPES
+                ):
+                    return False
+
+            # Check URL extension
+            url = flow.request.pretty_url.lower()
+            for ext in ResponseFilter.SKIP_EXTENSIONS:
+                if url.endswith(ext):
+                    return False
+
+            # Check for specific patterns that indicate large JS bundles
+            if any(
+                pattern in url
+                for pattern in [
+                    "bundle",
+                    "chunk",
+                    "vendor",
+                    "app.js",
+                    "main.js",
+                    "runtime",
+                    "polyfill",
+                    "framework",
+                ]
+            ):
+                Logger.log(f"Skipping JS bundle: {url}")
+                return False
+
+            return True
+
+        except Exception as e:
+            Logger.log(f"Error in response filter: {e}", "error")
+            return False
+
+    @staticmethod
+    def should_process_json_response(flow: http.HTTPFlow) -> bool:
+        """
+        Determine if a JSON response should be processed (more lenient size limits).
+
+        Args:
+            flow: HTTP flow to check
+
+        Returns:
+            True if JSON response should be processed, False otherwise
+        """
+        try:
+            if not flow.response:
+                return False
+
+            # Check content type for JSON
+            content_type = flow.response.headers.get("content-type", "").lower()
+            if "application/json" not in content_type:
+                return False
+
+            # Check size for JSON (more lenient)
+            content_length = flow.response.headers.get("content-length")
+            if content_length:
+                try:
+                    size = int(content_length)
+                    if size > ResponseFilter.MAX_JSON_SIZE:
+                        Logger.log(
+                            f"Skipping large JSON response: {size} bytes from {flow.request.pretty_url}"
+                        )
+                        return False
+                except ValueError:
+                    pass
+
+            return True
+
+        except Exception as e:
+            Logger.log(f"Error in JSON response filter: {e}", "error")
+            return False
+
+    @staticmethod
+    def get_response_text_safely(
+        flow: http.HTTPFlow, max_size: Optional[int] = None
+    ) -> Optional[str]:
+        """
+        Safely get response text with size limits.
+
+        Args:
+            flow: HTTP flow to get text from
+            max_size: Maximum size to read (defaults to MAX_RESPONSE_SIZE)
+
+        Returns:
+            Response text if within limits, None otherwise
+        """
+        try:
+            if not flow.response:
+                return None
+
+            # Use provided max_size or default
+            limit = max_size or ResponseFilter.MAX_RESPONSE_SIZE
+
+            # Check content length first
+            content_length = flow.response.headers.get("content-length")
+            if content_length:
+                try:
+                    size = int(content_length)
+                    if size > limit:
+                        Logger.log(f"Response too large: {size} bytes (limit: {limit})")
+                        return None
+                except ValueError:
+                    pass
+
+            # Get text with size limit
+            text = flow.response.get_text()
+
+            # Check actual text size
+            if len(text) > limit:
+                Logger.log(
+                    f"Response text too large: {len(text)} bytes (limit: {limit})"
+                )
+                return None
+
+            return text
+
+        except Exception as e:
+            Logger.log(f"Error getting response text: {e}", "error")
+            return None
+
+    @staticmethod
+    def get_json_response_safely(flow: http.HTTPFlow) -> Optional[str]:
+        """
+        Safely get JSON response text with higher size limits.
+
+        Args:
+            flow: HTTP flow to get JSON from
+
+        Returns:
+            JSON response text if within limits, None otherwise
+        """
+        return ResponseFilter.get_response_text_safely(
+            flow, ResponseFilter.MAX_JSON_SIZE
+        )
+
+
 class SharedState:
     """Shared state management for addon communication."""
 

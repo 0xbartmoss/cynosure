@@ -9,8 +9,11 @@ from email_extractor import EmailExtractor
 from auth_extractor import AuthExtractor
 from thread_collector import ThreadCollector
 from main_orchestrator import MainOrchestrator
-from shared_utils import Logger
-from config import ACTIVE_CONFIG
+from shared_utils import Logger, ResponseFilter
+from config import ACTIVE_CONFIG, PERFORMANCE_CONFIG
+
+# Initialize response filter with performance configuration
+ResponseFilter.update_from_config(PERFORMANCE_CONFIG)
 
 # Initialize addons based on configuration
 addons = []
