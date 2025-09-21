@@ -174,6 +174,58 @@ class SessionManager:
                 return session
             return None
 
+    def get_session_status_for_user(self, username: str) -> Dict[str, any]:
+        """
+        Get optimized session status for a user in a single lookup.
+        
+        Args:
+            username: Username to check
+            
+        Returns:
+            Dictionary with session status information
+        """
+        with self._lock:
+            from datetime import datetime, timedelta
+            cutoff_time = datetime.now() - timedelta(seconds=30)
+            
+            active_session = None
+            recent_session = None
+            
+            # Single pass through sessions for efficiency
+            for session in self._sessions.values():
+                if session.username == username and not session.is_expired():
+                    if not session.is_completed:
+                        # Active session found
+                        if not active_session or session.last_activity > active_session.last_activity:
+                            active_session = session
+                    elif session.last_activity >= cutoff_time:
+                        # Recent completed session found
+                        if not recent_session or session.last_activity > recent_session.last_activity:
+                            recent_session = session
+            
+            if active_session:
+                active_session.update_activity()
+                return {
+                    "has_active": True,
+                    "has_recent": False,
+                    "session_id": active_session.session_id,
+                    "session": active_session
+                }
+            elif recent_session:
+                return {
+                    "has_active": False,
+                    "has_recent": True,
+                    "session_id": recent_session.session_id,
+                    "session": recent_session
+                }
+            else:
+                return {
+                    "has_active": False,
+                    "has_recent": False,
+                    "session_id": None,
+                    "session": None
+                }
+
     def update_session_token(self, session_id: str, token: str) -> bool:
         """Update the SOTA token for a session."""
         with self._lock:

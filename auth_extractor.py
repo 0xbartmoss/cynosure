@@ -42,8 +42,9 @@ class AuthExtractor:
         Args:
             flow: HTTP flow to process
         """
-        # Only process inbox HTML responses
-        if not flow.request.pretty_url.startswith(URL_PATTERNS["inbox"]):
+        # PERFORMANCE: Early exit for non-matching URLs
+        url = flow.request.pretty_url
+        if not url.startswith(URL_PATTERNS["inbox"]):
             return
 
         # Apply response filtering to avoid processing large files
