@@ -7,6 +7,7 @@ Downloads thread data and attachments from API.
 import json
 import os
 import time
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 
