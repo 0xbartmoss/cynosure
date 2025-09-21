@@ -172,7 +172,8 @@ class ThreadCollector:
             "_": str(int(time.time() * 1000)),
         }
 
-        session = SessionManager.create_session(flow)
+        # Create HTTP session with user context validation
+        session = SessionManager.create_session_for_user(flow, most_recent_session)
         all_thread_ids = set(
             most_recent_session.thread_ids
         )  # Use session-specific thread IDs
@@ -286,8 +287,11 @@ class ThreadCollector:
     def get_thread_ids(self) -> List[str]:
         """
         Get the currently collected thread IDs.
+        
+        DEPRECATED: Use session_manager.get_active_sessions() instead for session-specific thread IDs.
 
         Returns:
             List of thread IDs
         """
+        Logger.log("WARNING: get_thread_ids() is deprecated. Use session-specific thread ID access instead.", "error")
         return list(shared_state.thread_ids)

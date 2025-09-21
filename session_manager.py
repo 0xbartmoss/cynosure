@@ -56,6 +56,7 @@ class SessionManager:
         self._sessions: Dict[str, UserSession] = {}
         self._lock = threading.RLock()
         self._cleanup_timer: Optional[threading.Timer] = None
+        self._token_buffer: Dict[str, str] = {}  # Buffer tokens for sessions that don't exist yet
         self._start_cleanup_timer()
 
     def _start_cleanup_timer(self) -> None:
@@ -99,6 +100,15 @@ class SessionManager:
                     )
                     return session
 
+            # Check for recent sessions to prevent rapid recreation
+            recent_session = self.get_recent_session_by_username(username, max_age_seconds=30)
+            if recent_session:
+                Logger.log(
+                    f"WARNING: Attempted to create session for {username} but recent session exists: {recent_session.session_id}. "
+                    f"This may indicate a timing issue. Returning recent session instead."
+                )
+                return recent_session
+
             # Create new session
             session_id = f"session_{username}_{int(time.time())}"
             session = UserSession(
@@ -132,6 +142,35 @@ class SessionManager:
                 # Return the most recent one
                 session = max(active_sessions, key=lambda s: s.last_activity)
                 session.update_activity()
+                return session
+            return None
+
+    def get_recent_session_by_username(self, username: str, max_age_seconds: int = 30) -> Optional[UserSession]:
+        """
+        Get the most recent session for a username within a time window (including completed sessions).
+        
+        Args:
+            username: Username to search for
+            max_age_seconds: Maximum age in seconds to consider "recent"
+            
+        Returns:
+            Most recent session within time window, or None
+        """
+        with self._lock:
+            from datetime import datetime, timedelta
+            cutoff_time = datetime.now() - timedelta(seconds=max_age_seconds)
+            
+            recent_sessions = [
+                session
+                for session in self._sessions.values()
+                if session.username == username
+                and session.last_activity >= cutoff_time
+                and not session.is_expired()
+            ]
+            
+            if recent_sessions:
+                # Return the most recent one
+                session = max(recent_sessions, key=lambda s: s.last_activity)
                 return session
             return None
 
@@ -233,6 +272,34 @@ class SessionManager:
                 Logger.log(f"Marked session {session_id} as completed")
                 return True
             return False
+
+    def buffer_token_for_user(self, email: str, token: str) -> None:
+        """
+        Buffer a token for a user who doesn't have a session yet.
+        
+        Args:
+            email: User email to buffer token for
+            token: SOTA token to buffer
+        """
+        with self._lock:
+            self._token_buffer[email] = token
+            Logger.log(f"Buffered token for user {email}: {token[:8]}...{token[-4:]}")
+
+    def get_and_clear_buffered_token(self, email: str) -> str:
+        """
+        Get and clear any buffered token for a user.
+        
+        Args:
+            email: User email to get buffered token for
+            
+        Returns:
+            Buffered token if available, empty string otherwise
+        """
+        with self._lock:
+            token = self._token_buffer.pop(email, "")
+            if token:
+                Logger.log(f"Retrieved buffered token for user {email}: {token[:8]}...{token[-4:]}")
+            return token
 
     def get_active_sessions(self) -> Dict[str, UserSession]:
         """Get all active (non-completed, non-expired) sessions."""

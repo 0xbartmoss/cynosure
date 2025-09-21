@@ -237,11 +237,12 @@ class MainOrchestrator:
         """
         return {
             "global_state": {
-                "username": shared_state.username,
-                "has_token": bool(shared_state.sota_token),
-                "thread_count": len(shared_state.thread_ids),
-                "ready": shared_state.is_ready(),
+                "username": f"DEPRECATED - Use session_manager instead (legacy: {shared_state.username})",
+                "has_token": f"DEPRECATED - Use session_manager instead (legacy: {bool(shared_state.sota_token)})",
+                "thread_count": f"DEPRECATED - Use session_manager instead (legacy: {len(shared_state.thread_ids)})",
+                "ready": f"DEPRECATED - Use session_manager instead (legacy: {shared_state.is_ready()})",
                 "flow_executed": self._flow_executed,
+                "isolation_status": "SESSIONS_ISOLATED - Global state deprecated for security",
             },
             "session_manager": session_manager.get_session_stats(),
             "session_execution_manager": session_execution_manager.get_stats(),

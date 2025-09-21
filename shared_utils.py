@@ -228,7 +228,48 @@ class SessionManager:
         for name, value in flow.request.cookies.items():
             cookies.set(name, value)
         session.cookies = cookies
+        return session
 
+    @staticmethod
+    def create_session_for_user(flow: http.HTTPFlow, user_session) -> requests.Session:
+        """
+        Create requests session with cookies from flow, scoped to a specific user session.
+        
+        Args:
+            flow: HTTP flow containing cookies
+            user_session: UserSession object for context validation
+            
+        Returns:
+            Configured requests session with user context
+        """
+        # Validate session context to prevent cross-user contamination
+        flow_email = DataExtractor.extract_email_from_url(flow.request.pretty_url)
+        if flow_email and flow_email != user_session.username:
+            Logger.log(
+                f"SECURITY WARNING: HTTP session context mismatch! "
+                f"Flow email: {flow_email}, Session user: {user_session.username}. "
+                f"Creating session anyway but logging for audit.", "error"
+            )
+        
+        session = requests.Session()
+
+        # Configure session with connection pooling
+        try:
+            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        except Exception:
+            pass
+
+        # Set cookies from flow
+        cookies = requests.cookies.RequestsCookieJar()
+        for name, value in flow.request.cookies.items():
+            cookies.set(name, value)
+
+        session.cookies = cookies
+        
+        # Add session context for logging
+        Logger.log(f"Created HTTP session for user session {user_session.session_id} ({user_session.username})")
         return session
 
 

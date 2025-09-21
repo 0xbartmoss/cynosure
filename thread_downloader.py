@@ -62,29 +62,16 @@ class ThreadDownloader:
         """
         Download all collected thread data and attachments.
         
-        DEPRECATED: Use download_all_threads_for_session() instead for session-based execution.
+        DEPRECATED AND DISABLED: This method is completely disabled to prevent session contamination.
+        Use download_all_threads_for_session() instead for session-based execution.
 
         Args:
             flow: HTTP flow containing cookies and context
         """
-        Logger.log("WARNING: download_all_threads() is deprecated. Use download_all_threads_for_session() instead.", "error")
-        
-        # Log legacy download attempt
-        Logger.log(f"=== LEGACY DOWNLOAD ATTEMPT ===")
-        Logger.log(f"User: {shared_state.username}")
-        Logger.log(f"Thread Count: {len(shared_state.thread_ids)}")
-        Logger.log(f"SOTA Token: {shared_state.sota_token[:8]}...{shared_state.sota_token[-4:] if len(shared_state.sota_token) > 12 else '***'}")
-        Logger.log(f"=== END LEGACY DOWNLOAD ATTEMPT ===")
-        
-        if not shared_state.thread_ids:
-            Logger.log("No thread IDs available for downloading", "error")
-            return
-        if not shared_state.sota_token:
-            Logger.log("Missing SOTA token for downloading", "error")
-            return
-        if not shared_state.username:
-            Logger.log("Missing username for downloading", "error")
-            return
+        Logger.log("CRITICAL ERROR: download_all_threads() is DISABLED to prevent session contamination!", "error")
+        Logger.log("Use download_all_threads_for_session() instead with proper session context.", "error")
+        Logger.log("Legacy method blocked to ensure session isolation.", "error")
+        return  # COMPLETELY BLOCK EXECUTION
 
         # Create output directory
         try:
@@ -210,8 +197,8 @@ class ThreadDownloader:
         )
         session_exec_state.set_downloading(len(session.thread_ids))
 
-        # Create session and headers
-        session_obj = SessionManager.create_session(flow)
+        # Create session and headers with user context validation
+        session_obj = SessionManager.create_session_for_user(flow, session)
         headers = dict(DEFAULT_HEADERS)
         headers["Host"] = "e.mail.ru"
         cookies = flow.request.cookies

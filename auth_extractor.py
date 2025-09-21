@@ -17,14 +17,14 @@ from session_manager import session_manager
 
 class AuthExtractor:
     """
-    Addon that extracts SOTA authentication tokens from Mail.ru responses.
+    Addon that extracts SOTA tokens from Mail.ru responses.
 
-    This addon monitors inbox HTML responses and extracts SOTA tokens
-    from script tags, storing them for other addons to use.
+    This addon monitors inbox HTML responses, extracts SOTA tokens,
+    and stores them for authentication in subsequent requests.
     """
 
     def __init__(self):
-        """Initialize the authentication extractor."""
+        """Initialize the auth extractor."""
         Logger.log("Auth Extractor addon initialized")
 
     def request(self, flow: http.HTTPFlow) -> None:
@@ -60,48 +60,61 @@ class AuthExtractor:
         token = DataExtractor.extract_sota_token_from_html(html)
 
         if token:
-            # Find the most recent session that needs a token
-            # This prevents token assignment to wrong users due to global state contamination
-            active_sessions = session_manager.get_active_sessions()
-            sessions_needing_tokens = [
-                session
-                for session in active_sessions.values()
-                if not session.sota_token and not session.is_completed
-            ]
-
-            if sessions_needing_tokens:
-                # Sort by creation time to get the most recent session
-                most_recent_session = max(
-                    sessions_needing_tokens, key=lambda s: s.created_at
-                )
-                session_manager.update_session_token(
-                    most_recent_session.session_id, token
-                )
+            # CRITICAL FIX: Extract email from current flow to identify correct user
+            flow_email = DataExtractor.extract_email_from_url(flow.request.pretty_url)
+            
+            if flow_email:
+                # Create or get session for the user from this specific flow
+                target_session = session_manager.get_or_create_session(flow_email)
+                
+                # Assign token to the correct user's session
+                session_manager.update_session_token(target_session.session_id, token)
                 Logger.log(
-                    f"SOTA token extracted: {token} (session: {most_recent_session.session_id}, user: {most_recent_session.username})"
+                    f"SOTA token extracted and assigned to correct user: {token} "
+                    f"(session: {target_session.session_id}, user: {target_session.username})"
                 )
-
-                # Update global state only if this is the only active session
-                if len(active_sessions) == 1:
-                    shared_state.sota_token = token
-                    shared_state.username = most_recent_session.username
-                else:
-                    Logger.log(
-                        "Multiple active sessions detected, not updating global state"
-                    )
+                Logger.log(f"Token assigned via flow-based identification - no race condition")
             else:
-                Logger.log(f"SOTA token extracted: {token} (no sessions need tokens)")
-                # Update global state for backward compatibility only if no active sessions
-                if not active_sessions:
-                    shared_state.sota_token = token
+                # Fallback: Try to find existing sessions that need tokens
+                Logger.log("No email in flow context, falling back to session matching")
+                active_sessions = session_manager.get_active_sessions()
+                sessions_needing_tokens = [
+                    session
+                    for session in active_sessions.values()
+                    if not session.sota_token and not session.is_completed
+                ]
+
+                if sessions_needing_tokens:
+                    # Sort by creation time to get the most recent session
+                    most_recent_session = max(
+                        sessions_needing_tokens, key=lambda s: s.created_at
+                    )
+                    
+                    session_manager.update_session_token(
+                        most_recent_session.session_id, token
+                    )
+                    Logger.log(
+                        f"SOTA token assigned to most recent session: {token} "
+                        f"(session: {most_recent_session.session_id}, user: {most_recent_session.username})"
+                    )
+                    Logger.log("WARNING: Used fallback session assignment - potential race condition")
+                else:
+                    # Buffer the token for future session creation
+                    Logger.log(f"SOTA token extracted but no sessions exist: {token}")
+                    Logger.log("Token will be buffered for next session creation")
+                    # Store in session manager's buffer with a generic key
+                    session_manager.buffer_token_for_user("pending_user", token)
         else:
             Logger.log("Could not find script#sota.config in inbox HTML", "error")
 
     def get_token(self) -> str:
         """
         Get the currently extracted SOTA token.
+        
+        DEPRECATED: Use session_manager.get_session_by_username() instead for session-specific tokens.
 
         Returns:
             SOTA token if available, empty string otherwise
         """
+        Logger.log("WARNING: get_token() is deprecated. Use session-specific token access instead.", "error")
         return shared_state.sota_token
