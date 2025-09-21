@@ -36,6 +36,7 @@ SERVICE_CONFIG = {
     "service_name": "cynosure",
     "enable_health_monitoring": True,
     "enable_retry_logic": True,
+    "base_dir": None,  # Set to override default BASE_DIR, or use CYNOSURE_BASE_DIR env var
 }
 
 # Performance configuration

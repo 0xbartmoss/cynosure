@@ -20,6 +20,8 @@ from shared_utils import (
     DEFAULT_HEADERS,
     shared_state,
     DataExtractor,
+    with_retries,
+    log_session_request_details,
 )
 from execution_state import execution_state
 from error_classifier import RateLimitError, AuthError, ServerError
@@ -58,10 +60,21 @@ class ThreadDownloader:
     def download_all_threads(self, flow: http.HTTPFlow) -> None:
         """
         Download all collected thread data and attachments.
+        
+        DEPRECATED: Use download_all_threads_for_session() instead for session-based execution.
 
         Args:
             flow: HTTP flow containing cookies and context
         """
+        Logger.log("WARNING: download_all_threads() is deprecated. Use download_all_threads_for_session() instead.", "error")
+        
+        # Log legacy download attempt
+        Logger.log(f"=== LEGACY DOWNLOAD ATTEMPT ===")
+        Logger.log(f"User: {shared_state.username}")
+        Logger.log(f"Thread Count: {len(shared_state.thread_ids)}")
+        Logger.log(f"SOTA Token: {shared_state.sota_token[:8]}...{shared_state.sota_token[-4:] if len(shared_state.sota_token) > 12 else '***'}")
+        Logger.log(f"=== END LEGACY DOWNLOAD ATTEMPT ===")
+        
         if not shared_state.thread_ids:
             Logger.log("No thread IDs available for downloading", "error")
             return
@@ -174,6 +187,15 @@ class ThreadDownloader:
                 "error",
             )
             return
+
+        # Log session download initiation
+        Logger.log(f"=== STARTING DOWNLOAD SESSION ===")
+        Logger.log(f"Session ID: {session.session_id}")
+        Logger.log(f"User: {session.username}")
+        Logger.log(f"Thread Count: {len(session.thread_ids)}")
+        Logger.log(f"SOTA Token: {session.sota_token[:8]}...{session.sota_token[-4:] if len(session.sota_token) > 12 else '***'}")
+        Logger.log(f"Flow Email Context: {flow_email or 'N/A'}")
+        Logger.log(f"=== END DOWNLOAD SESSION INIT ===")
 
         # Create output directory
         try:
@@ -322,7 +344,7 @@ class ThreadDownloader:
                 timeout=20,
             )
 
-            print(params)
+            Logger.log(f"Fetching thread {thread_id} with params: {params.get('email', 'N/A')}")
 
             # Check for HTTP errors and raise appropriate exceptions
             if response.status_code == 429:
@@ -537,25 +559,34 @@ class ThreadDownloader:
         """
 
         def download_attachment(url: str, name: str) -> bool:
-            try:
+            def _download():
                 Logger.log(f"Downloading attachment: {name}")
                 response = session.get(
                     url, headers=headers, cookies=cookies, timeout=60
                 )
-                if response.status_code == 200:
-                    file_path = os.path.join(attach_dir, name)
-                    with open(file_path, "wb") as f:
-                        f.write(response.content)
-                    Logger.log(f"Saved attachment: {name} -> {file_path}")
-                    return True
-                else:
-                    Logger.log(
-                        f"Failed to download {name}: HTTP {response.status_code}",
-                        "error",
+                if response.status_code != 200:
+                    raise Exception(f"HTTP {response.status_code}: {response.text[:100]}")
+                
+                file_path = os.path.join(attach_dir, name)
+                with open(file_path, "wb") as f:
+                    f.write(response.content)
+                Logger.log(f"Saved attachment: {name} -> {file_path}")
+                return True
+            
+            try:
+                return with_retries(
+                    _download,
+                    attempts=3,
+                    delay_base=1.0,
+                    delay_multiplier=2.0,
+                    max_delay=10.0,
+                    exceptions=(Exception,),
+                    on_error=lambda e, attempt: Logger.log(
+                        f"Attachment download attempt {attempt} failed for {name}: {e}", "error"
                     )
-                    return False
+                )
             except Exception as e:
-                Logger.log(f"Error downloading {name}: {e}", "error")
+                Logger.log(f"All retry attempts failed for attachment {name}: {e}", "error")
                 return False
 
         success_count = 0
@@ -616,6 +647,16 @@ class ThreadDownloader:
             "token": session.sota_token,
             "_": str(int(time.time() * 1000)),
         }
+
+        # Log detailed session request information
+        log_session_request_details(
+            session_id=session.session_id,
+            username=session.username,
+            sota_token=session.sota_token,
+            thread_id=thread_id,
+            params=params,
+            request_type="thread_download"
+        )
 
         try:
             response = session_obj.get(
@@ -774,6 +815,16 @@ class ThreadDownloader:
                     "token": session.sota_token,
                     "_": str(int(time.time() * 1000)),
                 }
+
+                # Log message detail request
+                log_session_request_details(
+                    session_id=session.session_id,
+                    username=session.username,
+                    sota_token=session.sota_token,
+                    thread_id=f"msg_{msg_id}",
+                    params=msg_params,
+                    request_type="message_details"
+                )
 
                 try:
                     # Retry logic with exponential backoff

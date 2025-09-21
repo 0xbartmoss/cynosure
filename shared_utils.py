@@ -7,16 +7,38 @@ This module contains common functionality used across multiple addons.
 import json
 import os
 import re
+import shutil
+import sys
+import time
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable, Any
 
 import requests
 from mitmproxy import http
 from requests.adapters import HTTPAdapter
 
 
-# Constants
-BASE_DIR = "/home/sh4d3/amsul/projects/mailru"
+# Constants - BASE_DIR is now configurable
+def _get_base_dir() -> str:
+    """Get configurable base directory with fallback chain."""
+    # Try environment variable first
+    env_dir = os.environ.get("CYNOSURE_BASE_DIR")
+    if env_dir:
+        return env_dir
+    
+    # Try config if available (avoid circular import)
+    try:
+        from config import SERVICE_CONFIG
+        config_dir = SERVICE_CONFIG.get("base_dir")
+        if config_dir:
+            return config_dir
+    except ImportError:
+        pass
+    
+    # Fallback to current working directory + cynosure_data
+    return os.path.join(os.getcwd(), "cynosure_data")
+
+BASE_DIR = _get_base_dir()
 THREAD_IDS_FILE = f"{BASE_DIR}/thread_ids.json"
 THREAD_DETAILS_DIR = f"{BASE_DIR}/thread_details"
 
@@ -629,6 +651,164 @@ class SharedState:
         self.thread_ids = set()
         self.ready_to_download = False
         self._flow_executed = False
+
+
+def log_session_request_details(
+    session_id: str,
+    username: str,
+    sota_token: str,
+    thread_id: str,
+    params: Dict,
+    request_type: str = "thread_download"
+) -> None:
+    """
+    Log detailed session request information for audit and debugging.
+    
+    Args:
+        session_id: Session identifier
+        username: User email
+        sota_token: SOTA authentication token
+        thread_id: Thread being processed
+        params: Request parameters
+        request_type: Type of request being made
+    """
+    # Mask sensitive token for logging (show first 8 and last 4 chars)
+    masked_token = f"{sota_token[:8]}...{sota_token[-4:]}" if len(sota_token) > 12 else "***masked***"
+    
+    Logger.log(f"=== SESSION REQUEST DETAILS ===")
+    Logger.log(f"Session ID: {session_id}")
+    Logger.log(f"Request Type: {request_type}")
+    Logger.log(f"User Email: {username}")
+    Logger.log(f"SOTA Token: {masked_token}")
+    Logger.log(f"Thread ID: {thread_id}")
+    Logger.log(f"Timestamp: {datetime.now().isoformat()}")
+    
+    # Log key parameters (excluding sensitive data)
+    safe_params = {k: v for k, v in params.items() if k not in ['token']}
+    safe_params['token'] = masked_token
+    Logger.log(f"Request Parameters: {json.dumps(safe_params, indent=2)}")
+    Logger.log(f"=== END SESSION REQUEST DETAILS ===")
+
+
+def log_session_summary(
+    session_id: str,
+    username: str,
+    total_threads: int,
+    successful_threads: int,
+    total_attachments: int,
+    successful_attachments: int,
+    duration_seconds: float,
+    status: str = "completed"
+) -> None:
+    """
+    Log session completion summary for audit and monitoring.
+    
+    Args:
+        session_id: Session identifier
+        username: User email
+        total_threads: Total threads attempted
+        successful_threads: Successfully downloaded threads
+        total_attachments: Total attachments attempted
+        successful_attachments: Successfully downloaded attachments
+        duration_seconds: Session duration in seconds
+        status: Session completion status
+    """
+    Logger.log(f"=== SESSION SUMMARY ===")
+    Logger.log(f"Session ID: {session_id}")
+    Logger.log(f"User Email: {username}")
+    Logger.log(f"Status: {status}")
+    Logger.log(f"Duration: {duration_seconds:.2f} seconds")
+    Logger.log(f"Threads: {successful_threads}/{total_threads} successful")
+    Logger.log(f"Attachments: {successful_attachments}/{total_attachments} successful")
+    Logger.log(f"Thread Success Rate: {(successful_threads/total_threads*100):.1f}%" if total_threads > 0 else "Thread Success Rate: N/A")
+    Logger.log(f"Attachment Success Rate: {(successful_attachments/total_attachments*100):.1f}%" if total_attachments > 0 else "Attachment Success Rate: N/A")
+    Logger.log(f"Completion Time: {datetime.now().isoformat()}")
+    Logger.log(f"=== END SESSION SUMMARY ===")
+
+
+def log_system_status() -> None:
+    """Log comprehensive system status for diagnostics."""
+    Logger.log("=== SYSTEM STATUS ===")
+    Logger.log(f"Python version: {sys.version}")
+    Logger.log(f"Platform: {sys.platform}")
+    Logger.log(f"Current working directory: {os.getcwd()}")
+    Logger.log(f"Effective BASE_DIR: {BASE_DIR}")
+    Logger.log(f"BASE_DIR source: {os.environ.get('CYNOSURE_BASE_DIR', 'default/config fallback')}")
+    
+    # Check directory status
+    Logger.log(f"BASE_DIR exists: {os.path.exists(BASE_DIR)}")
+    Logger.log(f"BASE_DIR writable: {os.access(BASE_DIR, os.W_OK) if os.path.exists(BASE_DIR) else 'N/A (does not exist)'}")
+    Logger.log(f"THREAD_DETAILS_DIR exists: {os.path.exists(THREAD_DETAILS_DIR)}")
+    
+    # Check systemd availability
+    systemctl_available = shutil.which("systemctl") is not None
+    journalctl_available = shutil.which("journalctl") is not None
+    Logger.log(f"systemctl available: {systemctl_available}")
+    Logger.log(f"journalctl available: {journalctl_available}")
+    
+    # Check thread IDs file
+    Logger.log(f"Thread IDs file exists: {os.path.exists(THREAD_IDS_FILE)}")
+    if os.path.exists(THREAD_IDS_FILE):
+        try:
+            with open(THREAD_IDS_FILE, 'r') as f:
+                data = json.load(f)
+                Logger.log(f"Thread IDs count: {len(data) if isinstance(data, list) else 'invalid format'}")
+        except Exception as e:
+            Logger.log(f"Error reading thread IDs file: {e}")
+    
+    Logger.log("=== END SYSTEM STATUS ===")
+
+
+def with_retries(
+    callable_func: Callable,
+    *args,
+    attempts: int = 3,
+    delay_base: float = 1.0,
+    delay_multiplier: float = 2.0,
+    max_delay: float = 60.0,
+    exceptions: tuple = (Exception,),
+    on_error: Optional[Callable[[Exception, int], None]] = None,
+    **kwargs
+) -> Any:
+    """
+    Execute a callable with retry logic and exponential backoff.
+    
+    Args:
+        callable_func: Function to call
+        *args: Positional arguments for the function
+        attempts: Maximum number of attempts
+        delay_base: Base delay in seconds
+        delay_multiplier: Multiplier for exponential backoff
+        max_delay: Maximum delay between attempts
+        exceptions: Tuple of exceptions to catch and retry on
+        on_error: Optional callback for error handling (exception, attempt_number)
+        **kwargs: Keyword arguments for the function
+    
+    Returns:
+        Result of the successful function call
+    
+    Raises:
+        The last exception if all attempts fail
+    """
+    last_exception = None
+    
+    for attempt in range(attempts):
+        try:
+            return callable_func(*args, **kwargs)
+        except exceptions as e:
+            last_exception = e
+            
+            if on_error:
+                on_error(e, attempt + 1)
+            
+            if attempt < attempts - 1:  # Don't sleep after the last attempt
+                delay = min(delay_base * (delay_multiplier ** attempt), max_delay)
+                Logger.log(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay:.1f}s...")
+                time.sleep(delay)
+            else:
+                Logger.log(f"All {attempts} attempts failed. Last error: {e}", "error")
+    
+    raise last_exception
 
 
 # Global shared state instance (kept for backward compatibility)

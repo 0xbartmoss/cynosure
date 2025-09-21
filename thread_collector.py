@@ -19,6 +19,8 @@ from shared_utils import (
     API_HEADERS,
     shared_state,
     ResponseFilter,
+    with_retries,
+    log_session_request_details,
 )
 from session_manager import session_manager
 
@@ -97,21 +99,16 @@ class ThreadCollector:
                 f"Added {session_added} thread IDs to session {most_recent_session.session_id} (user: {most_recent_session.username})"
             )
 
-            # Update global state only if this is the only active session
-            if len(active_sessions) == 1:
-                before_count = len(shared_state.thread_ids)
-                shared_state.thread_ids.update(thread_ids)
-                added = len(shared_state.thread_ids) - before_count
-                shared_state.username = most_recent_session.username
-                Logger.log(
-                    f"Collected {len(thread_ids)} thread IDs, added {added} new (total {len(shared_state.thread_ids)})"
-                )
-                # Save thread IDs to file
-                ThreadDataManager.save_thread_ids(shared_state.thread_ids)
-            else:
-                Logger.log(
-                    f"Multiple active sessions detected, not updating global state"
-                )
+            # Reset pagination offset for this session to ensure it starts from the beginning
+            session_manager.reset_pagination_offset(most_recent_session.session_id)
+
+            # Note: Global shared_state is deprecated - using session-based state only
+            Logger.log(
+                f"Collected {len(thread_ids)} thread IDs for session {most_recent_session.session_id}"
+            )
+            
+            # Save thread IDs to file using session data (for backward compatibility)
+            ThreadDataManager.save_thread_ids(most_recent_session.thread_ids)
 
             # Start pagination to fetch all threads
             self._fetch_all_threads_with_pagination(flow)
@@ -179,40 +176,63 @@ class ThreadCollector:
         all_thread_ids = set(
             most_recent_session.thread_ids
         )  # Use session-specific thread IDs
-        offset = 50  # Start from offset 50 (first 50 already collected)
+        
+        # Get session-specific pagination offset instead of hardcoded 50
+        offset = session_manager.get_pagination_offset(most_recent_session.session_id)
+        Logger.log(f"Starting pagination for session {most_recent_session.session_id} from offset {offset}")
 
         while True:
             params = base_params.copy()
             params["offset"] = str(offset)
 
             try:
-                Logger.log(f"Fetching 50 threads with offset {offset}")
-                response = session.get(
-                    URL_PATTERNS["smart_threads"],
-                    headers=API_HEADERS,
+                Logger.log(f"Fetching 50 threads with offset {offset} for session {most_recent_session.session_id}")
+                
+                # Log pagination request details
+                log_session_request_details(
+                    session_id=most_recent_session.session_id,
+                    username=most_recent_session.username,
+                    sota_token=most_recent_session.sota_token,
+                    thread_id=f"pagination_offset_{offset}",
                     params=params,
-                    timeout=30,
+                    request_type="thread_pagination"
                 )
 
-                if response.status_code != 200:
-                    Logger.log(
-                        f"Failed to fetch threads at offset {offset}: HTTP {response.status_code}",
-                        "error",
+                # Use retry logic for pagination requests
+                def fetch_page():
+                    response = session.get(
+                        URL_PATTERNS["smart_threads"],
+                        headers=API_HEADERS,
+                        params=params,
+                        timeout=30,
                     )
-                    break
-
-                data = response.json()
-                if not isinstance(data, dict) or data.get("status") != 200:
-                    Logger.log(
-                        f"Invalid response at offset {offset}: {data.get('status', 'unknown')}",
-                        "error",
+                    
+                    if response.status_code != 200:
+                        raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+                    
+                    data = response.json()
+                    if not isinstance(data, dict) or data.get("status") != 200:
+                        raise Exception(f"Invalid API response status: {data.get('status', 'unknown')}")
+                    
+                    return data
+                
+                # Retry with exponential backoff
+                data = with_retries(
+                    fetch_page,
+                    attempts=3,
+                    delay_base=2.0,
+                    delay_multiplier=2.0,
+                    max_delay=30.0,
+                    exceptions=(Exception,),
+                    on_error=lambda e, attempt: Logger.log(
+                        f"Pagination attempt {attempt} failed at offset {offset} for session {most_recent_session.session_id}: {e}", "error"
                     )
-                    break
+                )
 
                 threads = data.get("body", {}).get("threads", [])
                 if not threads:
                     Logger.log(
-                        f"No more threads found at offset {offset}, pagination complete"
+                        f"No more threads found at offset {offset} for session {most_recent_session.session_id}, pagination complete"
                     )
                     break
 
@@ -224,7 +244,7 @@ class ThreadCollector:
 
                 if not new_ids:
                     Logger.log(
-                        f"No valid thread IDs found at offset {offset}, pagination complete"
+                        f"No valid thread IDs found at offset {offset} for session {most_recent_session.session_id}, pagination complete"
                     )
                     break
 
@@ -234,19 +254,25 @@ class ThreadCollector:
                 added = len(all_thread_ids) - before_count
 
                 Logger.log(
-                    f"Found {len(new_ids)} threads at offset {offset}, added {added} new (total {len(all_thread_ids)})"
+                    f"Found {len(new_ids)} threads at offset {offset} for session {most_recent_session.session_id}, added {added} new (total {len(all_thread_ids)})"
                 )
 
                 # Check if we've reached the end
                 if len(new_ids) < 50:
-                    Logger.log(f"Reached end of threads (got {len(new_ids)} < 50)")
+                    Logger.log(f"Reached end of threads for session {most_recent_session.session_id} (got {len(new_ids)} < 50)")
                     break
 
+                # Update session-specific offset for next iteration
                 offset += 50
+                session_manager.update_pagination_offset(most_recent_session.session_id, offset)
 
             except Exception as e:
-                Logger.log(f"Error fetching threads at offset {offset}: {e}", "error")
-                break
+                Logger.log(f"All retry attempts failed for offset {offset} in session {most_recent_session.session_id}: {e}", "error")
+                # Continue with next offset instead of breaking entirely
+                Logger.log(f"Skipping offset {offset} for session {most_recent_session.session_id}, continuing with next batch...")
+                offset += 50
+                session_manager.update_pagination_offset(most_recent_session.session_id, offset)
+                continue
 
         # Update session with all collected thread IDs
         session_manager.add_thread_ids(most_recent_session.session_id, all_thread_ids)
@@ -254,11 +280,8 @@ class ThreadCollector:
             f"Pagination complete for session {most_recent_session.session_id}. Total threads collected: {len(all_thread_ids)}"
         )
 
-        # Update global state only if this is the only active session
-        if len(active_sessions) == 1:
-            shared_state.thread_ids = all_thread_ids
-            shared_state.username = most_recent_session.username
-            ThreadDataManager.save_thread_ids(shared_state.thread_ids)
+        # Save thread IDs to file using session data (for backward compatibility)
+        ThreadDataManager.save_thread_ids(all_thread_ids)
 
     def get_thread_ids(self) -> List[str]:
         """

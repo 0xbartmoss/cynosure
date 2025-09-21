@@ -4,6 +4,7 @@ Service Manager for Cynosure
 Handles systemd service status checking and logging.
 """
 
+import shutil
 import subprocess
 from typing import Dict
 
@@ -22,6 +23,10 @@ class ServiceManager:
         """
         self.service_name = service_name
 
+    def _check_systemd_available(self) -> bool:
+        """Check if systemd tools are available."""
+        return shutil.which("systemctl") is not None
+
     def get_service_status(self) -> str:
         """
         Get the current status of the service.
@@ -29,6 +34,9 @@ class ServiceManager:
         Returns:
             Service status string
         """
+        if not self._check_systemd_available():
+            return "unsupported"
+            
         try:
             result = subprocess.run(
                 ["systemctl", "is-active", self.service_name],
@@ -62,6 +70,10 @@ class ServiceManager:
         Returns:
             Service logs as string
         """
+        if not shutil.which("journalctl"):
+            Logger.log("journalctl not available - cannot retrieve service logs", "error")
+            return "Service logs unavailable: journalctl not found (non-systemd environment?)"
+            
         try:
             result = subprocess.run(
                 ["journalctl", "-u", self.service_name, "-n", str(lines), "--no-pager"],

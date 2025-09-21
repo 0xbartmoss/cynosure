@@ -29,6 +29,7 @@ class UserSession:
     is_completed: bool = False
     download_progress: int = 0
     total_threads: int = 0
+    pagination_offset: int = 50  # Track per-session pagination offset
 
     def update_activity(self) -> None:
         """Update the last activity timestamp."""
@@ -188,6 +189,36 @@ class SessionManager:
             if session and session.is_downloading:
                 session.download_progress = progress
                 session.update_activity()
+                return True
+            return False
+
+    def update_pagination_offset(self, session_id: str, offset: int) -> bool:
+        """Update pagination offset for a session."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session.pagination_offset = offset
+                session.update_activity()
+                Logger.log(f"Updated pagination offset for session {session_id} to {offset}")
+                return True
+            return False
+
+    def get_pagination_offset(self, session_id: str) -> int:
+        """Get current pagination offset for a session."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                return session.pagination_offset
+            return 50  # Default starting offset
+
+    def reset_pagination_offset(self, session_id: str) -> bool:
+        """Reset pagination offset to start for a session."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session.pagination_offset = 50  # Reset to start after first batch
+                session.update_activity()
+                Logger.log(f"Reset pagination offset for session {session_id} to 50")
                 return True
             return False
 

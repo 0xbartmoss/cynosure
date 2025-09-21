@@ -3,6 +3,9 @@ Health Monitor for Mail.ru Cynosure
 
 Monitors system health and provides recommendations.
 Updated for session-based architecture.
+
+NOTE: This is the CANONICAL health monitor implementation.
+Other variants (health_monitor_fixed.py, health_monitor_corrected.py) are deprecated.
 """
 
 import json
